@@ -9,7 +9,7 @@ From the data directory, run download_and_preprocess_cub200.sh <data-dir>
 
 This will download and format the data
 
-##Data Directory
+### Data Directory
 
 The data directory contains several files used in organizing and preparing the data for preprocessing
 
@@ -31,7 +31,7 @@ cub200_preprocessing.py: Adapted from a tensorflow file, this file performs data
 
 cub200_main.py: Adapted from a tensorflow file, this file runs the resnet model on the dataset (unfinished)
 
-##Models Directory
+### Models Directory
 The models directory contains a script for downloading a pretrained ResNet-50 model
 
 download_pretrained_resnet50.sh: bash script to download model checkpoint of pretrained ResNet-50
