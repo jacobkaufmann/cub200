@@ -15,5 +15,9 @@ DATA_DIR="${1%/}"
 SCRATCH_DIR="${DATA_DIR}/raw-data/"
 mkdir -p "${DATA_DIR}"
 mkdir -p "${SCRATCH_DIR}"
-WORK_DIR="$0.runfiles/arxiv_1605_06217/arxiv_1605_06217"
+cd ..
+WORK_DIR="$(pwd)"
 
+# Download the CUB 200 data
+DOWNLOAD_SCRIPT="${WORK_DIR}/data/download_cub200.sh"
+"${DOWNLOAD_SCRIPT}" "data/${SCRATCH_DIR}"
