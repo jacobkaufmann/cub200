@@ -1,10 +1,9 @@
-"""
-This file is an adaptation of the build_image_data.py file located here:
+#!/usr/bin/python
 
-https://github.com/tensorflow/models/blob/master/research/inception/inception/data/build_image_data.py
+# This file is an adaptation of the build_image_data.py file located here:
+# https://github.com/tensorflow/models/blob/master/research/inception/inception/data/build_image_data.py
+# A copyright below signifies the influence from tensorflow
 
-A copyright below signifies the huge influence from tensorflow
-"""
 
 # Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 #
@@ -74,12 +73,8 @@ import threading
 import numpy as np
 import tensorflow as tf
 
-tf.app.flags.DEFINE_string('train_directory', '/tmp/',
-                           'Training data directory')
-tf.app.flags.DEFINE_string('validation_directory', '/tmp/',
-                           'Validation data directory')
-tf.app.flags.DEFINE_string('output_directory', '/tmp/',
-                           'Output data directory')
+tf.app.flags.DEFINE_string('images_directory', '/tmp/', 'Images directory')
+tf.app.flags.DEFINE_string('output_directory', '/tmp/', 'Output data directory')
 
 tf.app.flags.DEFINE_integer('train_shards', 1024,
                             'Number of shards in training TFRecord files.')
@@ -110,6 +105,14 @@ tf.app.flags.DEFINE_string('bounding_boxes_file', 'bounding_boxes.txt', 'Boundin
 # where each line has an image ID and a boolean for indicating if an example is in the train dataset
 tf.app.flags.DEFINE_string('data_split_file', 'train_test_split.txt', 'Data split file')
 
+# The images file contains the list of all images and corresponding number in the dataset
+# Assumes that the file contains entries as such:
+# 1 001.Black_footed_Albatross/Black_Footed_Albatross_0046_18.jpg
+# ...
+# 11788 200.Common_Yellowthroat/Common_Yellowthroat_0055_190967.jpg
+# where each line has the number of the image in the dataset and the filename for that image
+tf.app.flags.DEFINE_string('images_file', 'images.txt', 'Images file')
+
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -121,12 +124,19 @@ def _int64_feature(value):
   return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
 
+def _float_feature(value):
+  """Wrapper for inserting float features into Example proto."""
+  if not isinstance(value, list):
+    value = [value]
+  return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+
+
 def _bytes_feature(value):
   """Wrapper for inserting bytes features into Example proto."""
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-def _convert_to_example(filename, image_buffer, label, text, height, width):
+def _convert_to_example(filename, image_buffer, label, text, bbox, height, width):
   """Build an Example proto for an example.
   Args:
     filename: string, path to an image file, e.g., '/path/to/example.JPG'
@@ -139,6 +149,14 @@ def _convert_to_example(filename, image_buffer, label, text, height, width):
     Example proto
   """
 
+  xmin = []
+  ymin = []
+  xmax = []
+  ymax = []
+  for b in bbox:
+    assert len(b) == 4
+    [l.append(point) for l, point in zip([xmin, ymin, xmax, ymax], b)]
+
   colorspace = 'RGB'
   channels = 3
   image_format = 'JPEG'
@@ -150,6 +168,10 @@ def _convert_to_example(filename, image_buffer, label, text, height, width):
       'image/channels': _int64_feature(channels),
       'image/class/label': _int64_feature(label),
       'image/class/text': _bytes_feature(tf.compat.as_bytes(text)),
+      'image/object/bbox/xmin': _float_feature(xmin),
+      'image/object/bbox/xmax': _float_feature(xmax),
+      'image/object/bbox/ymin': _float_feature(ymin),
+      'image/object/bbox/ymax': _float_feature(ymax),
       'image/format': _bytes_feature(tf.compat.as_bytes(image_format)),
       'image/filename': _bytes_feature(tf.compat.as_bytes(os.path.basename(filename))),
       'image/encoded': _bytes_feature(tf.compat.as_bytes(image_buffer))}))
@@ -226,7 +248,7 @@ def _process_image(filename, coder):
 
 
 def _process_image_files_batch(coder, thread_index, ranges, name, filenames,
-                               texts, labels, num_shards):
+                               texts, labels, bboxes, num_shards):
   """Processes and saves list of images as TFRecord in 1 thread.
   Args:
     coder: instance of ImageCoder to provide TensorFlow image coding utils.
@@ -256,7 +278,7 @@ def _process_image_files_batch(coder, thread_index, ranges, name, filenames,
     # Generate a sharded version of the file name, e.g. 'train-00002-of-00010'
     shard = thread_index * num_shards_per_batch + s
     output_filename = '%s-%.5d-of-%.5d' % (name, shard, num_shards)
-    output_file = os.path.join(FLAGS.output_directory, output_filename)
+    output_file = os.path.join(FLAGS.output_directory, name, output_filename)
     writer = tf.python_io.TFRecordWriter(output_file)
 
     shard_counter = 0
@@ -265,6 +287,7 @@ def _process_image_files_batch(coder, thread_index, ranges, name, filenames,
       filename = filenames[i]
       label = labels[i]
       text = texts[i]
+      bbox = bboxes[i]
 
       try:
         image_buffer, height, width = _process_image(filename, coder)
@@ -274,7 +297,7 @@ def _process_image_files_batch(coder, thread_index, ranges, name, filenames,
         continue
 
       example = _convert_to_example(filename, image_buffer, label,
-                                    text, height, width)
+                                    text, bbox, height, width)
       writer.write(example.SerializeToString())
       shard_counter += 1
       counter += 1
@@ -458,12 +481,51 @@ def _build_bounding_box_lookup(bounding_boxes_file):
   return images_to_bboxes
 
 
-def _build_dataset_split_lookup(data_split_file):
-  """Build dictionary to retrieve data assignment (train, test, validation) for image """
-  return
+def _build_dataset_split_lookup(data_split_file, images_file):
+  """Build dictionary to retrieve data assignment (train, test, validation) for image
+  Args:
+    data_split_file: file containing set assignment for each image
+    images_file: file containing image numbers and file names
+  """
+  split_lines = tf.gfile.FastGFile(data_split_file, 'r').readlines()
+  images_lines = tf.gfile.FastGFile(images_file, 'r').readlines()
+  images_to_dataset = {}
+
+  num_assignments = 0
+  num_images = 0
+  dataset = ''
+
+  for (sl, il) in zip(split_lines, images_lines):
+    if sl and il:
+      split_parts = sl.split()
+      image_parts = il.split()
+      assert len(split_parts) == 2, ('Failed to parse: %s' % sl)
+      assert len(image_parts) == 2, ('Failed to parse: %s' % il)
+      num = split_parts[0]
+      assert num == image_parts[0], ('Incongruence between %s and %s' % (sl, il))
+
+      # Determine proper dataset (training images are assigned to the validation directory with probability 1/10)
+      if split_parts[1] == '0':
+        dataset = 'test'
+      else:
+        r = random.randint(1, 101)
+        if r <= 10:
+          dataset = 'validation'
+        else:
+          dataset = 'train'
+      filename = image_parts[1].split('/')[1]
+
+      if filename not in images_to_dataset:
+        images_to_dataset[filename] = dataset
+        num_images += 1
+      num_assignments += 1
+
+  print('Successfully read %d dataset assignments '
+        'across %d images.' % (num_assignments, num_images))
+  return images_to_dataset
 
 
-def _process_dataset(name, directory, num_shards, classes_file, images_to_bboxes):
+def _process_dataset(name, directory, num_shards, classes_file, images_to_bboxes, images_to_dataset):
   """Process a complete data set and save it as a TFRecord.
   Args:
     name: string, unique identifier specifying the data set.
@@ -472,9 +534,28 @@ def _process_dataset(name, directory, num_shards, classes_file, images_to_bboxes
     classes_file: string, path to the classes file.
     images_to_bboxes: dictionary mapping image file names to bounding boxes
   """
+  # Finds all filenames, texts, and labels
   filenames, texts, labels = _find_image_files(directory, classes_file)
-  bboxes = _find_image_bounding_boxes(filenames, images_to_bboxes)
-  _process_image_files(name, filenames, texts, labels, bboxes, num_shards)
+
+  # Lists to contain filenames, texts, and labels relevant to dataset specified by name parameter
+  filtered_filenames = []
+  filtered_texts = []
+  filtered_labels = []
+  bboxes = []
+
+  for (fn, t, l) in zip(filenames, texts, labels):
+    filename = fn.split('/')
+    filename_suffix = filename[len(filename) - 1]
+    if images_to_dataset[filename_suffix] == name:
+        filtered_filenames.append(fn)
+        filtered_texts.append(t)
+        filtered_labels.append(l)
+    bboxes = _find_image_bounding_boxes(filtered_filenames, images_to_bboxes)
+
+  if not os.path.exists(os.path.join(FLAGS.output_directory), name):
+      os.mkdirs(os.path.join(FLAGS.output_directory), name)
+  _process_image_files(name, filtered_filenames, filtered_texts, filtered_labels, bboxes, num_shards)
+
 
 
 def main(unused_argv):
@@ -488,11 +569,14 @@ def main(unused_argv):
   # Build map from filename to bounding box
   images_to_bboxes = _build_bounding_box_lookup(FLAGS.bounding_boxes_file)
 
+  # Build map from filename to data set (train, validation)
+  images_to_dataset = _build_dataset_split_lookup(FLAGS.data_split_file, FLAGS.images_file)
+
   # Run it!
-  _process_dataset('validation', FLAGS.validation_directory,
-                   FLAGS.validation_shards, FLAGS.classes_file, images_to_bboxes)
-  _process_dataset('train', FLAGS.train_directory,
-                   FLAGS.train_shards, FLAGS.classes_file, images_to_bboxes)
+  _process_dataset('validation', FLAGS.images_directory,
+                   FLAGS.validation_shards, FLAGS.classes_file, images_to_bboxes, images_to_dataset)
+  _process_dataset('train', FLAGS.images_directory,
+                   FLAGS.train_shards, FLAGS.classes_file, images_to_bboxes, images_to_dataset)
 
 
 if __name__ == '__main__':

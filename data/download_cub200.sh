@@ -2,7 +2,7 @@
 
 # Script to download CUB_200_2011 data set
 
-# Usage: ./download_cub200.sh [dir_name]
+# Usage: ./download_cub200.sh [data_dir_name]
 set -e
 
 if [ -z "$1"]; then

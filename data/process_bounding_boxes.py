@@ -15,10 +15,10 @@ The x and y coordinates will be normalized in order to account for varying image
 
 This must be done because of the necessary image resizing for feeding images into the network
 
-Usage: process_bounding_boxes.py <dir>
+Usage: process_bounding_boxes.py <bounding_box_file> <images_file>
 
-where <dir> refers to the location of the file containing the original bounding box annotations and images.txt in order
-to map image files to image ids
+where <boudning_box_file> refers to the location of the file containing the original bounding box
+annotations and <images_file> refers to the location of images.txt in order to map image files to image ids
 """
 
 from __future__ import absolute_import
@@ -50,28 +50,26 @@ class Box:
 
 
 # Read image files in from images.txt in <dir> and return as array of Image instances
-def image_instances(dir):
-    images_file = os.path.join(dir, 'images.txt')
-    with open(images_file, 'r') as file:
+def image_instances(imgs_file):
+    images = np.array([])
+    with open(imgs_file, 'r') as file:
         lines = file.readlines()
-        images = np.array()
         for line in lines:
             img = line.split()
             id = img[0]
             desc = img[1]
             label = desc.split('/')[0]
-            file = desc.split('/')[1]
-            instance = CUBImage(id, label, file)
+            filename = desc.split('/')[1]
+            instance = CUBImage(id, label, filename)
             images = np.append(images, [instance])
     return images
 
 
-# Read bounding box information from bounding_boxes.txt in <dir> and return as array of Box instances
-def bounding_box_instances(dir):
-    bounding_box_file = os.path.join(dir, 'bounding_boxes.txt')
-    with open(bounding_box_file, 'r') as file:
+# Read bounding box information from bounding_boxes.txt and return as array of Box instances
+def bounding_box_instances(bbox_file):
+    boxes = np.array([])
+    with open(bbox_file, 'r') as file:
         lines = file.readlines()
-        boxes = np.array()
         for line in lines:
             bounding_box = line.split()
             id = bounding_box[0]
@@ -86,29 +84,30 @@ def bounding_box_instances(dir):
 
 if __name__ == '__main__':
     # Quit if invalid arguments
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         print('Invalid usage\n'
-              'usage: process_bounding_boxes.py <dir>',
+              'usage: process_bounding_boxes.py <bounding_box_file> <images_file>',
               file=sys.stderr)
         sys.exit(-1)
 
-    directory = sys.argv[1]
+    bbox_file = sys.argv[1]
+    imgs_file = sys.argv[2]
 
     # Call methods to acquire image and bounding box instances
-    images = image_instances(directory)
-    boxes = bounding_box_instances(directory)
+    images = image_instances(imgs_file)
+    boxes = bounding_box_instances(bbox_file)
 
-    # Create new file for bounding boxes
-    bounding_box_file = os.open(os.path.join(directory, 'bounding_boxes.txt'), 'w+')
+    # Var for images directory
+    images_directory = os.path.join(os.getcwd(), 'data', 'raw-data', 'CUB_200_2011', 'images')
 
     # Make sure there is an equal number of images and bounding boxes (arrays are parallel)
     assert (len(images) == len(boxes))
 
     # Open the new file and calculate new information to be written
-    with open(bounding_box_file, 'w') as file:
+    with open(bbox_file, 'w') as file:
         # Iterate over image instances and create new bounding box instances with updated information
         for (image, box) in zip(images, boxes):
-            image_file = os.path.join(directory, 'images', image.label, image.filename)
+            image_file = os.path.join(images_directory, image.label, image.filename)
             img = Image.open(image_file)
             img_width, img_height = img.size
 
