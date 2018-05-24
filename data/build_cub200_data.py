@@ -135,6 +135,25 @@ def _bytes_feature(value):
   """Wrapper for inserting bytes features into Example proto."""
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
+def _int64_feature(value):
+  return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
+
+def _int64_list_feature(value):
+  return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
+
+
+def _bytes_feature(value):
+  return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def _bytes_list_feature(value):
+  return tf.train.Feature(bytes_list=tf.train.BytesList(value=value))
+
+
+def _float_list_feature(value):
+  return tf.train.Feature(float_list=tf.train.FloatList(value=value))
+
 
 def _convert_to_example(filename, image_buffer, label, text, bbox, height, width):
   """Build an Example proto for an example.
@@ -160,6 +179,9 @@ def _convert_to_example(filename, image_buffer, label, text, bbox, height, width
   colorspace = 'RGB'
   channels = 3
   image_format = 'JPEG'
+  classes_text = []
+  object = 'bird'
+  classes_text.append(object.encode('utf8'))
 
   example = tf.train.Example(features=tf.train.Features(feature={
       'image/height': _int64_feature(height),
@@ -168,12 +190,15 @@ def _convert_to_example(filename, image_buffer, label, text, bbox, height, width
       'image/channels': _int64_feature(channels),
       'image/class/label': _int64_feature(label),
       'image/class/text': _bytes_feature(tf.compat.as_bytes(text)),
-      'image/object/bbox/xmin': _float_feature(xmin),
-      'image/object/bbox/xmax': _float_feature(xmax),
-      'image/object/bbox/ymin': _float_feature(ymin),
-      'image/object/bbox/ymax': _float_feature(ymax),
+      'image/object/class/label': _int64_list_feature([1]),
+      'image/object/class/text': _bytes_list_feature(classes_text),
+      'image/object/bbox/xmin': _float_list_feature(xmin),
+      'image/object/bbox/xmax': _float_list_feature(xmax),
+      'image/object/bbox/ymin': _float_list_feature(ymin),
+      'image/object/bbox/ymax': _float_list_feature(ymax),
       'image/format': _bytes_feature(tf.compat.as_bytes(image_format)),
       'image/filename': _bytes_feature(tf.compat.as_bytes(os.path.basename(filename))),
+      'image/source_id': _bytes_feature(tf.compat.as_bytes(os.path.basename(filename))),
       'image/encoded': _bytes_feature(tf.compat.as_bytes(image_buffer))}))
   return example
 
@@ -505,11 +530,14 @@ def _build_dataset_split_lookup(data_split_file, images_file):
       assert num == image_parts[0], ('Incongruence between %s and %s' % (sl, il))
 
       # Determine proper dataset (training images are assigned to the validation directory with probability 1/10)
+      validation_set_size = 400
+      current_validation_set_size = 0
       if split_parts[1] == '0':
         dataset = 'test'
       else:
         r = random.randint(1, 101)
-        if r <= 10:
+        if r <= 10 and current_validation_set_size < validation_set_size:
+          current_validation_set_size += 1
           dataset = 'validation'
         else:
           dataset = 'train'
@@ -552,10 +580,9 @@ def _process_dataset(name, directory, num_shards, classes_file, images_to_bboxes
         filtered_labels.append(l)
     bboxes = _find_image_bounding_boxes(filtered_filenames, images_to_bboxes)
 
-  if not os.path.exists(os.path.join(FLAGS.output_directory), name):
-      os.mkdirs(os.path.join(FLAGS.output_directory), name)
+  if not os.path.exists(os.path.join(FLAGS.output_directory, name)):
+      os.mkdirs(os.path.join(FLAGS.output_directory, name))
   _process_image_files(name, filtered_filenames, filtered_texts, filtered_labels, bboxes, num_shards)
-
 
 
 def main(unused_argv):
@@ -577,7 +604,8 @@ def main(unused_argv):
                    FLAGS.validation_shards, FLAGS.classes_file, images_to_bboxes, images_to_dataset)
   _process_dataset('train', FLAGS.images_directory,
                    FLAGS.train_shards, FLAGS.classes_file, images_to_bboxes, images_to_dataset)
-
+  _process_dataset('test', FLAGS.images_directory,
+                   1, FLAGS.classes_file, images_to_bboxes, images_to_dataset)
 
 if __name__ == '__main__':
   tf.app.run()
